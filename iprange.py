@@ -46,3 +46,26 @@ except Exception as e:
     print(e)
 # print("::::::::::: IPv6 :::::::::::")
 # ip_diff("ipv6_prefixes", "ipv6_prefix")
+
+#!/bin/bash
+
+# Input JSON file
+input_file="input.json"
+
+# Read the JSON content into a variable
+json_content=$(cat "$input_file")
+
+# Extract the value associated with the "data" key
+value_to_encode=$(echo "$json_content" | jq -r '.data')
+
+# Encode the value to base64
+encoded_value=$(echo -n "$value_to_encode" | base64)
+
+# Replace the value in the JSON
+updated_json=$(echo "$json_content" | jq --arg encoded "$encoded_value" '.data = $encoded')
+
+# Save the updated JSON to a new file or overwrite the original
+echo "$updated_json" > "$input_file"
+
+# Display the updated JSON
+cat "$input_file"
