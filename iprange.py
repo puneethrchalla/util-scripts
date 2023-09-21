@@ -69,3 +69,37 @@ echo "$updated_json" > "$input_file"
 
 # Display the updated JSON
 cat "$input_file"
+
+FOR LOOP
+#!/bin/bash
+
+# Check if the required tools are installed
+if ! command -v jq &> /dev/null; then
+    echo "jq is not installed. Please install it first."
+    exit 1
+fi
+
+# Check if a JSON file is provided as an argument
+if [ $# -ne 1 ]; then
+    echo "Usage: $0 <input_json_file>"
+    exit 1
+fi
+
+input_file="$1"
+
+# Check if the input JSON file exists
+if [ ! -f "$input_file" ]; then
+    echo "Input JSON file '$input_file' not found."
+    exit 1
+fi
+
+# Create a temporary file for the encoded JSON
+encoded_file="$(mktemp)"
+
+# Use jq to encode the JSON values and keep the keys intact
+jq 'with_entries(if .value | strings then .value |= @base64 else . end)' "$input_file" > "$encoded_file"
+
+# Replace the original JSON file with the encoded content
+mv "$encoded_file" "$input_file"
+
+echo "JSON values have been base64 encoded in '$input_file'."
