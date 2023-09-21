@@ -103,3 +103,17 @@ jq 'with_entries(if .value | strings then .value |= @base64 else . end)' "$input
 mv "$encoded_file" "$input_file"
 
 echo "JSON values have been base64 encoded in '$input_file'."
+
+# extract username & password
+
+# Assuming you have the PostgreSQL URL in a variable
+postgres_url="postgres://username:password@hostname:port/database"
+
+# Extract the username
+username=$(echo "$postgres_url" | grep -oE "://([^:]+):" | cut -d ':' -f 3)
+
+# Extract the password
+password=$(echo "$postgres_url" | grep -oE "://([^@]+)@" | cut -d '@' -f 1 | cut -d ':' -f 2)
+
+echo "Username: $username"
+echo "Password: $password"
