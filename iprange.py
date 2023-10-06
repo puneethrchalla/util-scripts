@@ -117,3 +117,14 @@ password=$(echo "$postgres_url" | grep -oE "://([^@]+)@" | cut -d '@' -f 1 | cut
 
 echo "Username: $username"
 echo "Password: $password"
+
+Dear [Colleague's Name],
+
+I wanted to extend my gratitude for your remarkable ability to quickly grasp and excel in handling the challenging tasks related to NGINX load balancers. Your dedication and fast learning have been a tremendous asset to our team.
+
+Your willingness to step up and tackle complex projects with such enthusiasm is truly commendable. Your contributions have made a significant impact, and I'm genuinely impressed by your skills and initiative.
+
+Thank you for your hard work and dedication. I look forward to seeing your continued growth and success in our team.
+
+Warm regards,
+[Your Name]
