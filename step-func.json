@@ -1,0 +1,40 @@
+```json
+{
+  "Comment": "Scale down ECS service in us-west-2 region",
+  "StartAt": "GetECSServiceDetails",
+  "States": {
+    "GetECSServiceDetails": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::aws-sdk:ecs:describeServices",
+      "Parameters": {
+        "cluster": "my-ecs-cluster",
+        "services": [
+          "my-ecs-service"
+        ]
+      },
+      "Next": "CheckRunningTaskCount"
+    },
+    "CheckRunningTaskCount": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Variable": "$.services[0].runningCount",
+          "NumericGreaterThan": 1,
+          "Next": "ScaleDownService"
+        }
+      ],
+      "Default": "NoOpState"
+    },
+    "ScaleDownService": {
+      "Type": "Task",
+      "Resource": "arn:aws:lambda:us-west-2:YOUR_AWS_ACCOUNT_ID:function:ScaleDownECSServiceFunction",
+      "Next": "NoOpState"
+    },
+    "NoOpState": {
+      "Type": "Pass",
+      "End": true
+    }
+  }
+}
+
+```
