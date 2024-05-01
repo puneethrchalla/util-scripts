@@ -53,3 +53,18 @@ except socket.timeout:
     print(f"Request timed out after {timeout} seconds.")
 except urllib.error.URLError as e:
     print(f"Error: {e.reason}")
+    
+# set proxy
+import urllib.request
+
+# Configure proxy
+proxy = urllib.request.ProxyHandler({'http': 'http://proxy.example.com:8080',
+                                     'https': 'https://proxy.example.com:8080'})
+
+# Create opener and install it
+opener = urllib.request.build_opener(proxy)
+urllib.request.install_opener(opener)
+
+# Use urlopen as usual
+with urllib.request.urlopen('http://example.com') as response:
+    html = response.read()
