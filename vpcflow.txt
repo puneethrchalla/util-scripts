@@ -1,0 +1,5 @@
+filter srcAddr != '-' and dstAddr != '-'
+| filter not (srcAddr like /^10\./ or srcAddr like /^172\.(1[6-9]|2[0-9]|3[0-1])\./ or srcAddr like /^192\.168\./)
+| filter not (dstAddr like /^10\./ or dstAddr like /^172\.(1[6-9]|2[0-9]|3[0-1])\./ or dstAddr like /^192\.168\./)
+| fields @timestamp, srcAddr, dstAddr, action, protocol
+| sort @timestamp desc
