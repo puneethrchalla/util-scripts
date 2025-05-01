@@ -7,17 +7,21 @@ import socket
 import sys
 import os
 
-def get_ssl_issuer(fqdn, port=443):
+def get_ssl_cert_info(fqdn, port=443):
     try:
         ctx = ssl.create_default_context()
         with ctx.wrap_socket(socket.socket(), server_hostname=fqdn) as s:
             s.settimeout(5)
             s.connect((fqdn, port))
             cert = s.getpeercert()
-            issuer = dict(x[0] for x in cert['issuer'])
-            return issuer.get('organizationName', '')
+
+            issuer = dict(x[0] for x in cert['issuer']).get('organizationName', '')
+            subject = dict(x[0] for x in cert['subject'])
+            common_name = subject.get('commonName', '')
+
+            return issuer, common_name
     except Exception as e:
-        return f"Error: {e}"
+        return f"Error: {e}", ""
 
 def main(json_path, output_csv):
     if not os.path.isfile(json_path):
@@ -29,12 +33,12 @@ def main(json_path, output_csv):
 
     with open(output_csv, 'w', newline='', encoding='utf-8') as csvfile:
         writer = csv.writer(csvfile)
-        writer.writerow(["FQDN", "Issuer"])
+        writer.writerow(["FQDN", "Issuer", "Common Name"])
 
         for fqdn in fqdns:
-            issuer = get_ssl_issuer(fqdn)
-            writer.writerow([fqdn, issuer])
-            print(f"{fqdn} => {issuer}")
+            issuer, common_name = get_ssl_cert_info(fqdn)
+            writer.writerow([fqdn, issuer, common_name])
+            print(f"{fqdn} => Issuer: {issuer}, CN: {common_name}")
 
 if __name__ == "__main__":
     if len(sys.argv) != 3:
