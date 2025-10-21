@@ -1,287 +1,75 @@
-# Account B - Main Infrastructure
+# Variables
 
-# variables.tf
-
-variable “account_a_id” {
-description = “Client AWS Account ID (Account A)”
+variable “kinesis_stream_arn” {
+description = “ARN of the existing Kinesis stream”
 type        = string
 }
 
-variable “splunk_hec_endpoint” {
-description = “Splunk HEC endpoint URL”
+variable “kinesis_stream_name” {
+description = “Name of the existing Kinesis stream”
 type        = string
 }
 
-variable “splunk_hec_token” {
+variable “private_splunk_hec_url” {
+description = “Private Splunk HEC URL (e.g., https://splunk.internal:8088/services/collector)”
+type        = string
+}
+
+variable “private_splunk_hec_token” {
 description = “Splunk HEC token”
 type        = string
 sensitive   = true
 }
 
 variable “vpc_id” {
-description = “VPC ID for PrivateLink”
+description = “VPC ID where private Splunk is accessible”
 type        = string
 }
 
 variable “subnet_ids” {
-description = “Subnet IDs for VPC endpoint”
+description = “Subnet IDs for Lambda (should have access to private Splunk)”
 type        = list(string)
 }
 
-variable “s3_bucket_name” {
-description = “S3 bucket name for log archival”
+variable “environment” {
+description = “Environment name”
 type        = string
+default     = “production”
 }
 
-# main.tf
+# Security Group for Lambda
 
-terraform {
-required_providers {
-aws = {
-source  = “hashicorp/aws”
-version = “~> 5.0”
-}
-}
-}
-
-provider “aws” {
-region = “us-east-1”
-}
-
-# Kinesis Data Stream
-
-resource “aws_kinesis_stream” “logs” {
-name             = “centralized-logs-stream”
-shard_count      = 2
-retention_period = 24
-
-shard_level_metrics = [
-“IncomingBytes”,
-“IncomingRecords”,
-“OutgoingBytes”,
-“OutgoingRecords”,
-]
-
-stream_mode_details {
-stream_mode = “PROVISIONED”
-}
-
-tags = {
-Environment = “production”
-Purpose     = “log-aggregation”
-}
-}
-
-# Kinesis Stream Policy - Allow Account A to put records
-
-resource “aws_kinesis_stream_policy” “logs_policy” {
-stream_name = aws_kinesis_stream.logs.name
-
-policy = jsonencode({
-Version = “2012-10-17”
-Statement = [
-{
-Sid    = “AllowAccountAPutRecords”
-Effect = “Allow”
-Principal = {
-AWS = “arn:aws:iam::${var.account_a_id}:root”
-}
-Action = [
-“kinesis:PutRecord”,
-“kinesis:PutRecords”
-]
-Resource = aws_kinesis_stream.logs.arn
-}
-]
-})
-}
-
-# S3 Bucket for Log Archive
-
-resource “aws_s3_bucket” “logs_archive” {
-bucket = var.s3_bucket_name
-
-tags = {
-Purpose = “log-archive”
-}
-}
-
-resource “aws_s3_bucket_versioning” “logs_archive” {
-bucket = aws_s3_bucket.logs_archive.id
-
-versioning_configuration {
-status = “Enabled”
-}
-}
-
-resource “aws_s3_bucket_server_side_encryption_configuration” “logs_archive” {
-bucket = aws_s3_bucket.logs_archive.id
-
-rule {
-apply_server_side_encryption_by_default {
-sse_algorithm = “AES256”
-}
-}
-}
-
-# IAM Role for Firehose
-
-resource “aws_iam_role” “firehose_role” {
-name = “kinesis-firehose-logs-role”
-
-assume_role_policy = jsonencode({
-Version = “2012-10-17”
-Statement = [
-{
-Action = “sts:AssumeRole”
-Effect = “Allow”
-Principal = {
-Service = “firehose.amazonaws.com”
-}
-}
-]
-})
-}
-
-resource “aws_iam_role_policy” “firehose_policy” {
-name = “kinesis-firehose-logs-policy”
-role = aws_iam_role.firehose_role.id
-
-policy = jsonencode({
-Version = “2012-10-17”
-Statement = [
-{
-Effect = “Allow”
-Action = [
-“s3:AbortMultipartUpload”,
-“s3:GetBucketLocation”,
-“s3:GetObject”,
-“s3:ListBucket”,
-“s3:ListBucketMultipartUploads”,
-“s3:PutObject”
-]
-Resource = [
-aws_s3_bucket.logs_archive.arn,
-“${aws_s3_bucket.logs_archive.arn}/*”
-]
-},
-{
-Effect = “Allow”
-Action = [
-“kinesis:DescribeStream”,
-“kinesis:GetShardIterator”,
-“kinesis:GetRecords”,
-“kinesis:ListShards”
-]
-Resource = aws_kinesis_stream.logs.arn
-},
-{
-Effect = “Allow”
-Action = [
-“logs:PutLogEvents”
-]
-Resource = aws_cloudwatch_log_group.firehose_logs.arn
-}
-]
-})
-}
-
-# CloudWatch Log Group for Firehose
-
-resource “aws_cloudwatch_log_group” “firehose_logs” {
-name              = “/aws/kinesisfirehose/logs-archive”
-retention_in_days = 7
-}
-
-resource “aws_cloudwatch_log_stream” “firehose_logs” {
-name           = “S3Delivery”
-log_group_name = aws_cloudwatch_log_group.firehose_logs.name
-}
-
-# Kinesis Firehose Delivery Stream
-
-resource “aws_kinesis_firehose_delivery_stream” “logs_to_s3” {
-name        = “logs-to-s3”
-destination = “extended_s3”
-
-kinesis_source_configuration {
-kinesis_stream_arn = aws_kinesis_stream.logs.arn
-role_arn           = aws_iam_role.firehose_role.arn
-}
-
-extended_s3_configuration {
-role_arn   = aws_iam_role.firehose_role.arn
-bucket_arn = aws_s3_bucket.logs_archive.arn
-
-```
-prefix              = "logs/year=!{timestamp:yyyy}/month=!{timestamp:MM}/day=!{timestamp:dd}/"
-error_output_prefix = "errors/year=!{timestamp:yyyy}/month=!{timestamp:MM}/day=!{timestamp:dd}/!{firehose:error-output-type}/"
-
-buffering_size     = 5
-buffering_interval = 300
-
-compression_format = "GZIP"
-
-cloudwatch_logging_options {
-  enabled         = true
-  log_group_name  = aws_cloudwatch_log_group.firehose_logs.name
-  log_stream_name = aws_cloudwatch_log_stream.firehose_logs.name
-}
-```
-
-}
-
-tags = {
-Purpose = “log-archive”
-}
-}
-
-# Security Group for VPC Endpoint
-
-resource “aws_security_group” “vpc_endpoint_sg” {
-name        = “splunk-vpc-endpoint-sg”
-description = “Security group for Splunk VPC endpoint”
+resource “aws_security_group” “lambda_to_splunk” {
+name        = “lambda-to-private-splunk-${var.environment}”
+description = “Allow Lambda to communicate with private Splunk”
 vpc_id      = var.vpc_id
 
-ingress {
-from_port   = 443
-to_port     = 443
+egress {
+from_port   = 8088
+to_port     = 8088
 protocol    = “tcp”
-cidr_blocks = [“10.0.0.0/8”]
-description = “Allow HTTPS from VPC”
+cidr_blocks = [“0.0.0.0/0”]
+description = “Splunk HEC”
 }
 
 egress {
-from_port   = 0
-to_port     = 0
-protocol    = “-1”
+from_port   = 443
+to_port     = 443
+protocol    = “tcp”
 cidr_blocks = [“0.0.0.0/0”]
+description = “HTTPS”
 }
 
 tags = {
-Name = “splunk-vpc-endpoint-sg”
-}
-}
-
-# VPC Endpoint for Splunk (PrivateLink)
-
-resource “aws_vpc_endpoint” “splunk” {
-vpc_id              = var.vpc_id
-service_name        = “com.amazonaws.vpce.us-east-1.vpce-svc-xxxxxxxxxx” # Replace with actual Splunk service name
-vpc_endpoint_type   = “Interface”
-subnet_ids          = var.subnet_ids
-security_group_ids  = [aws_security_group.vpc_endpoint_sg.id]
-private_dns_enabled = true
-
-tags = {
-Name = “splunk-privatelink”
+Name        = “lambda-to-private-splunk-${var.environment}”
+Environment = var.environment
 }
 }
 
 # IAM Role for Lambda
 
-resource “aws_iam_role” “lambda_role” {
-name = “kinesis-to-splunk-lambda-role”
+resource “aws_iam_role” “lambda_kinesis_to_splunk” {
+name = “lambda-kinesis-to-private-splunk-${var.environment}”
 
 assume_role_policy = jsonencode({
 Version = “2012-10-17”
@@ -295,11 +83,17 @@ Service = “lambda.amazonaws.com”
 }
 ]
 })
+
+tags = {
+Environment = var.environment
+}
 }
 
-resource “aws_iam_role_policy” “lambda_policy” {
-name = “kinesis-to-splunk-lambda-policy”
-role = aws_iam_role.lambda_role.id
+# IAM Policy for Lambda
+
+resource “aws_iam_role_policy” “lambda_kinesis_to_splunk” {
+name = “lambda-kinesis-to-splunk-policy”
+role = aws_iam_role.lambda_kinesis_to_splunk.id
 
 policy = jsonencode({
 Version = “2012-10-17”
@@ -307,15 +101,13 @@ Statement = [
 {
 Effect = “Allow”
 Action = [
-“kinesis:DescribeStream”,
-“kinesis:DescribeStreamSummary”,
 “kinesis:GetRecords”,
 “kinesis:GetShardIterator”,
-“kinesis:ListShards”,
+“kinesis:DescribeStream”,
 “kinesis:ListStreams”,
-“kinesis:SubscribeToShard”
+“kinesis:ListShards”
 ]
-Resource = aws_kinesis_stream.logs.arn
+Resource = var.kinesis_stream_arn
 },
 {
 Effect = “Allow”
@@ -341,19 +133,48 @@ Resource = “*”
 })
 }
 
-# CloudWatch Log Group for Lambda
+# Secrets Manager for Splunk HEC Token
 
-resource “aws_cloudwatch_log_group” “lambda_logs” {
-name              = “/aws/lambda/kinesis-to-splunk”
-retention_in_days = 7
+resource “aws_secretsmanager_secret” “splunk_hec_token” {
+name        = “private-splunk-hec-token-${var.environment}”
+description = “HEC token for private Splunk instance”
+
+tags = {
+Environment = var.environment
+}
+}
+
+resource “aws_secretsmanager_secret_version” “splunk_hec_token” {
+secret_id     = aws_secretsmanager_secret.splunk_hec_token.id
+secret_string = var.private_splunk_hec_token
+}
+
+# IAM Policy for Secrets Manager
+
+resource “aws_iam_role_policy” “lambda_secrets_access” {
+name = “lambda-secrets-access”
+role = aws_iam_role.lambda_kinesis_to_splunk.id
+
+policy = jsonencode({
+Version = “2012-10-17”
+Statement = [
+{
+Effect = “Allow”
+Action = [
+“secretsmanager:GetSecretValue”
+]
+Resource = aws_secretsmanager_secret.splunk_hec_token.arn
+}
+]
+})
 }
 
 # Lambda Function
 
-resource “aws_lambda_function” “kinesis_to_splunk” {
+resource “aws_lambda_function” “kinesis_to_private_splunk” {
 filename         = “lambda_function.zip”
-function_name    = “kinesis-to-splunk”
-role            = aws_iam_role.lambda_role.arn
+function_name    = “kinesis-to-private-splunk-${var.environment}”
+role            = aws_iam_role.lambda_kinesis_to_splunk.arn
 handler         = “lambda_function.lambda_handler”
 source_code_hash = filebase64sha256(“lambda_function.zip”)
 runtime         = “python3.11”
@@ -362,58 +183,126 @@ memory_size     = 512
 
 vpc_config {
 subnet_ids         = var.subnet_ids
-security_group_ids = [aws_security_group.vpc_endpoint_sg.id]
+security_group_ids = [aws_security_group.lambda_to_splunk.id]
 }
 
 environment {
 variables = {
-SPLUNK_HEC_URL   = var.splunk_hec_endpoint
-SPLUNK_HEC_TOKEN = var.splunk_hec_token
+SPLUNK_HEC_URL          = var.private_splunk_hec_url
+SPLUNK_HEC_TOKEN_SECRET = aws_secretsmanager_secret.splunk_hec_token.name
+BATCH_SIZE              = “100”
+MAX_RETRIES             = “3”
 }
 }
 
+tags = {
+Environment = var.environment
+}
+}
+
+# CloudWatch Log Group
+
+resource “aws_cloudwatch_log_group” “lambda_logs” {
+name              = “/aws/lambda/${aws_lambda_function.kinesis_to_private_splunk.function_name}”
+retention_in_days = 14
+
+tags = {
+Environment = var.environment
+}
+}
+
+# Event Source Mapping
+
+resource “aws_lambda_event_source_mapping” “kinesis_to_lambda” {
+event_source_arn  = var.kinesis_stream_arn
+function_name     = aws_lambda_function.kinesis_to_private_splunk.arn
+starting_position = “LATEST”
+batch_size        = 100
+parallelization_factor = 1
+
+# Enable error handling
+
+maximum_retry_attempts = 3
+maximum_record_age_in_seconds = 604800  # 7 days
+
+# Bisect batch on error
+
+bisect_batch_on_function_error = true
+
+# Destination for failed records (optional)
+
+# destination_config {
+
+# on_failure {
+
+# destination_arn = aws_sqs_queue.dlq.arn
+
+# }
+
+# }
+
 depends_on = [
-aws_cloudwatch_log_group.lambda_logs,
-aws_iam_role_policy.lambda_policy
+aws_iam_role_policy.lambda_kinesis_to_splunk
 ]
 }
 
-# Event Source Mapping - Kinesis to Lambda
+# CloudWatch Alarms
 
-resource “aws_lambda_event_source_mapping” “kinesis_to_lambda” {
-event_source_arn  = aws_kinesis_stream.logs.arn
-function_name     = aws_lambda_function.kinesis_to_splunk.arn
-starting_position = “LATEST”
-batch_size        = 100
-maximum_batching_window_in_seconds = 10
-parallelization_factor = 1
+resource “aws_cloudwatch_metric_alarm” “lambda_errors” {
+alarm_name          = “lambda-kinesis-to-splunk-errors-${var.environment}”
+comparison_operator = “GreaterThanThreshold”
+evaluation_periods  = “2”
+metric_name         = “Errors”
+namespace           = “AWS/Lambda”
+period              = “300”
+statistic           = “Sum”
+threshold           = “10”
+alarm_description   = “This metric monitors lambda errors”
+treat_missing_data  = “notBreaching”
 
-function_response_types = [“ReportBatchItemFailures”]
+dimensions = {
+FunctionName = aws_lambda_function.kinesis_to_private_splunk.function_name
+}
+
+tags = {
+Environment = var.environment
+}
+}
+
+resource “aws_cloudwatch_metric_alarm” “lambda_throttles” {
+alarm_name          = “lambda-kinesis-to-splunk-throttles-${var.environment}”
+comparison_operator = “GreaterThanThreshold”
+evaluation_periods  = “1”
+metric_name         = “Throttles”
+namespace           = “AWS/Lambda”
+period              = “300”
+statistic           = “Sum”
+threshold           = “5”
+alarm_description   = “This metric monitors lambda throttles”
+treat_missing_data  = “notBreaching”
+
+dimensions = {
+FunctionName = aws_lambda_function.kinesis_to_private_splunk.function_name
+}
+
+tags = {
+Environment = var.environment
+}
 }
 
 # Outputs
 
-output “kinesis_stream_arn” {
-description = “ARN of the Kinesis stream”
-value       = aws_kinesis_stream.logs.arn
-}
-
-output “kinesis_stream_name” {
-description = “Name of the Kinesis stream”
-value       = aws_kinesis_stream.logs.name
-}
-
-output “firehose_delivery_stream_arn” {
-description = “ARN of the Firehose delivery stream”
-value       = aws_kinesis_firehose_delivery_stream.logs_to_s3.arn
-}
-
-output “s3_bucket_name” {
-description = “S3 bucket for log archive”
-value       = aws_s3_bucket.logs_archive.id
-}
-
 output “lambda_function_arn” {
 description = “ARN of the Lambda function”
-value       = aws_lambda_function.kinesis_to_splunk.arn
+value       = aws_lambda_function.kinesis_to_private_splunk.arn
+}
+
+output “lambda_function_name” {
+description = “Name of the Lambda function”
+value       = aws_lambda_function.kinesis_to_private_splunk.function_name
+}
+
+output “lambda_security_group_id” {
+description = “Security group ID for Lambda”
+value       = aws_security_group.lambda_to_splunk.id
 }
